@@ -1,9 +1,17 @@
 import torch
 from time import time
 import numpy as np
+from time import time
 
 from sklearn.cluster import KMeans
 from sklearn.mixture import GaussianMixture
+from sklearn.metrics.cluster import contingency_matrix
+from sklearn.metrics import accuracy_score
+
+from scipy.optimize import linear_sum_assignment
+
+from numpy.typing import NDArray
+from typing import Optional, Dict, Any
 
 
 class DenseEncoder(torch.nn.Module):
@@ -74,11 +82,83 @@ class DEC(torch.nn.Module):
     def _target_distribution(q):
         weight = q**2 / torch.sum(q, 0)
         return (weight.t() / torch.sum(weight, 1)).t()
+
+    def encode(self, X):
+        return self.encoder(X)
         
     def forward(self, X):
         z = self.encoder(X)
         return self.clustering_layer(z)
+
+
+def get_label_mapping(y_true: NDArray, y_pred: NDArray) -> Dict[int, int]:
+    cm = contingency_matrix(y_true, y_pred)
+    true_labels, cluster_labels = linear_sum_assignment(cm, maximize=True)
+    label_mapping = {cluster_l: true_l for cluster_l, true_l in zip(cluster_labels, true_labels)}
+    return label_mapping
+
+
+def train_and_select_model(X_train_full: NDArray, X_train_labeled: NDArray, y_train: NDArray,
+                           n_models: int, dec_parameters: Optional[Dict[str, Any]]=None, verbose=True, device='cpu') -> DEC:
+    if dec_parameters is None:
+        dec_parameters = {}
+    if verbose:
+        print(f"Training {n_models} DEC models...")
+        ts = time()
+    models = [train_dec_end_to_end(X_train_full, verbose=False, device=device, **dec_parameters) for i in range(n_models)]
+    if verbose:
+        te = time()
+        print(f"Training took {te - ts:.2f}s!\n")
+        print(f"Selecting best performing model...")
+        ts = time()
+
+    max_acc = .0
+    max_acc_i = -1
+    for i, model in enumerate(models):
+        y_pred_prob = model(torch.from_numpy(X_train_labeled).to(torch.float32).to(device)).detach().cpu().numpy()
+        y_pred = np.argmax(y_pred_prob, axis=1)
+        label_mapping = get_label_mapping(y_train, y_pred)
+        y_pred = np.array([label_mapping[l] for l in y_pred])
+        acc = accuracy_score(y_train, y_pred)
+        if acc > max_acc:
+            max_acc = acc
+            max_acc_i = i
+        if verbose:
+            print(f"Model {i + 1}/{n_models} scored {acc:.2%};")
     
+    if verbose:
+        te = time()
+        print(f"Selected model {max_acc_i + 1} with an accuracy of {max_acc:.2%} in {te - ts:.2f}s!\n")
+
+    
+
+def train_dec_end_to_end(X_train, X_val=None, dec_clustering_init='kmeans',
+                         n_clusters=4, latent_dim=32, layer_sizes=[512, 128],
+                         pretrain_args=None, dec_train_args=None,
+                         verbose=True, device='cpu') -> DEC:
+    input_dim = X_train.shape[-1]
+    if pretrain_args is None:
+        pretrain_args = {}
+    if dec_train_args is None:
+        dec_train_args = {}
+
+    encoder = DenseEncoder(input_dim, latent_dim, layer_sizes=layer_sizes)
+    decoder = DenseDecoder(latent_dim, input_dim, layer_sizes=layer_sizes[::-1])
+
+    if verbose:
+        print('Starting pretraining!')
+    pretraining(encoder, decoder, X_train, X_val, verbose=verbose, device=device,
+                **pretrain_args)
+    if verbose:
+        print('Pretraining finished.')
+        print('Training DEC!')
+    dec_model = train_dec(encoder, X_train, n_clusters, latent_dim, cluster_init=dec_clustering_init,
+                          verbose=verbose, device=device, **dec_train_args)
+    if verbose:
+        print('DEC trained.')
+    
+    return dec_model
+
 
 def pretraining(encoder, decoder,
                 X_train, X_val=None, device='cpu',
@@ -160,7 +240,9 @@ def pretraining(encoder, decoder,
 
 
 def train_dec(encoder, X_train,
-              n_clusters=3, latent_dim=10, tol=1E-3, update_interval=300, batch_size=512, lr=1E-3, weight_decay=2E-5,
+              n_clusters=3, latent_dim=10,
+              tol=1E-3, update_interval=300,
+              batch_size=512, lr=1E-3, weight_decay=2E-5,
               device='cpu', cluster_init='kmeans', verbose=True):
     if verbose:
         print(f"Training using device: {device}")
@@ -208,7 +290,8 @@ def train_dec(encoder, X_train,
 
         if epoch % update_interval == 0:
                 delta = (current_cluster_assignment != prev_cluster_assignment).sum() / len(current_cluster_assignment)
-                print(f"Iter {epoch} - Loss: {loss.detach().cpu().item():.6f} - Delta: {delta:.6f}")
+                if verbose:
+                    print(f"Iter {epoch} - Loss: {loss.detach().cpu().item():.6f} - Delta: {delta:.6f}")
         epoch += 1
 
     return dec_model

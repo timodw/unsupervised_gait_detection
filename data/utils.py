@@ -5,6 +5,9 @@ import scipy
 from scipy.signal import find_peaks
 from scipy.fft import fft, ifft, fftfreq
 
+from typing import Tuple
+from numpy.typing import NDArray
+
 
 def balance_dataset(X, y):
     labels, label_counts = np.unique(y, return_counts=True)
@@ -116,3 +119,13 @@ def fft_time_series(X, sampling_rate):
     X_fft[0] = 0.
     X_fft_freq = fftfreq(len(X), 1 / sampling_rate)
     return np.abs(X_fft)[:len(X) // 2]
+
+
+def get_labeled_subset(X: NDArray, y: NDArray, n_samples: int) -> Tuple[NDArray, NDArray]:
+    X_selected, y_selected = [], []
+    for l in np.unique(y):
+        N = np.sum(y == l)
+        indices = np.random.choice(N, n_samples)
+        X_selected.append(X[y == l][indices])
+        y_selected.append(y[y == l][indices])
+    return np.concat(X_selected), np.concat(y_selected)
