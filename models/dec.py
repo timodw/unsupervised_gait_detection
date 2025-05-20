@@ -5,13 +5,7 @@ from time import time
 
 from sklearn.cluster import KMeans
 from sklearn.mixture import GaussianMixture
-from sklearn.metrics.cluster import contingency_matrix
-from sklearn.metrics import accuracy_score
 
-from scipy.optimize import linear_sum_assignment
-
-from numpy.typing import NDArray
-from typing import Optional, Dict, Any
 
 
 class DenseEncoder(torch.nn.Module):
@@ -87,50 +81,9 @@ class DEC(torch.nn.Module):
         return self.encoder(X)
         
     def forward(self, X):
-        z = self.encoder(X)
+        z = self.encode(X)
         return self.clustering_layer(z)
 
-
-def get_label_mapping(y_true: NDArray, y_pred: NDArray) -> Dict[int, int]:
-    cm = contingency_matrix(y_true, y_pred)
-    true_labels, cluster_labels = linear_sum_assignment(cm, maximize=True)
-    label_mapping = {cluster_l: true_l for cluster_l, true_l in zip(cluster_labels, true_labels)}
-    return label_mapping
-
-
-def train_and_select_model(X_train_full: NDArray, X_train_labeled: NDArray, y_train: NDArray,
-                           n_models: int, dec_parameters: Optional[Dict[str, Any]]=None, verbose=True, device='cpu') -> DEC:
-    if dec_parameters is None:
-        dec_parameters = {}
-    if verbose:
-        print(f"Training {n_models} DEC models...")
-        ts = time()
-    models = [train_dec_end_to_end(X_train_full, verbose=False, device=device, **dec_parameters) for i in range(n_models)]
-    if verbose:
-        te = time()
-        print(f"Training took {te - ts:.2f}s!\n")
-        print(f"Selecting best performing model...")
-        ts = time()
-
-    max_acc = .0
-    max_acc_i = -1
-    for i, model in enumerate(models):
-        y_pred_prob = model(torch.from_numpy(X_train_labeled).to(torch.float32).to(device)).detach().cpu().numpy()
-        y_pred = np.argmax(y_pred_prob, axis=1)
-        label_mapping = get_label_mapping(y_train, y_pred)
-        y_pred = np.array([label_mapping[l] for l in y_pred])
-        acc = accuracy_score(y_train, y_pred)
-        if acc > max_acc:
-            max_acc = acc
-            max_acc_i = i
-        if verbose:
-            print(f"Model {i + 1}/{n_models} scored {acc:.2%};")
-    
-    if verbose:
-        te = time()
-        print(f"Selected model {max_acc_i + 1} with an accuracy of {max_acc:.2%} in {te - ts:.2f}s!\n")
-
-    
 
 def train_dec_end_to_end(X_train, X_val=None, dec_clustering_init='kmeans',
                          n_clusters=4, latent_dim=32, layer_sizes=[512, 128],

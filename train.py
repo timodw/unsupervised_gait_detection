@@ -3,7 +3,7 @@ import argparse
 from pathlib import Path
 from time import time
 
-from models.dec import train_and_select_model
+from models.utils import train_and_select_model
 from data.utils import get_labeled_subset
 
 from typing import Tuple
@@ -31,17 +31,17 @@ if __name__ == '__main__':
     parser.add_argument('--data', default='/home/timodw/IDLab/unsupervised_gait_detection/processed_data')
     parser.add_argument('--results', default='/home/timodw/IDLab/unsupervised_gait_detection/results')
     parser.add_argument('--preprocessing', default='raw')
-    parser.add_argument('--fold', default=0)
-    parser.add_argument('--n_samples', default=5)
-    parser.add_argument('--n_models', default=5)
-    parser.add_argument('--n_iter', default=5)
-    parser.add_argument('--dec_init', default='kmeans')
-    parser.add_argument('--latent_dim', default=32)
+    parser.add_argument('--fold', default=0, type=int)
+    parser.add_argument('--n_samples', default=5, type=int)
+    parser.add_argument('--n_models', default=5, type=int)
+    parser.add_argument('--n_iter', default=5, type=int)
+    parser.add_argument('--latent_dim', default=32, type=int)
+    parser.add_argument('--model_type', default='dec_kmeans')
     parser.add_argument('--device', default='cuda')
     args = parser.parse_args()
 
     # Create folder for storing the results and logs
-    # results_folder = Path(args.results) / f"{args.preprocessing}" / f"fold_{args.fold}"
+    # results_folder = Path(args.results) / f"{args.model_type}" / f"{args.preprocessing}" / f"fold_{args.fold}"
     # results_folder.mkdir(exist_ok=True, parents=True)
 
     # Loading the data for this fold
@@ -53,13 +53,20 @@ if __name__ == '__main__':
     te = time()
     print(f"Loaded {X_train.shape[0]:,} training samples and {X_val.shape[0]:,} validation samples in {te - ts:.2f}s!\n")
 
+    if args.model_type.startswith('dec'):
+        init_method = args.model_type.split('_')[1]
+        model_parameters = {'dec_clustering_init': init_method}
+        args.model_type = 'dec'
+    else:
+        model_parameters = {}
 
-    # Train the DEC models
+    # Train the models
     for i in range(args.n_iter):
         print(f"Training iteration {i + 1}/{args.n_iter}...")
         ts = time()
         X_train_selected, y_train_selected = get_labeled_subset(X_train, y_train, args.n_samples)
-        train_and_select_model(X_train, X_train_selected, y_train_selected, args.n_models,
+        train_and_select_model(X_train, X_train_selected, y_train_selected,
+                               args.n_models, args.model_type, model_parameters,
                                verbose=True, device=args.device)
         te = time()
         print(f"Training completed after {te - ts:.2f}s\n")
