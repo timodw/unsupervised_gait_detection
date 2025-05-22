@@ -38,7 +38,7 @@ if __name__ == '__main__':
     parser.add_argument('--n_models', default=5, type=int)
     parser.add_argument('--n_iter', default=5, type=int)
     parser.add_argument('--latent_dim', default=32, type=int)
-    parser.add_argument('--balanced', default=False, type=bool)
+    parser.add_argument('--balanced', default=False, action='store_true')
     parser.add_argument('--model_type', default='dec_kmeans')
     parser.add_argument('--device', default='cuda')
     args = parser.parse_args()
