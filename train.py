@@ -3,7 +3,7 @@ import argparse
 from pathlib import Path
 from time import time
 
-from models.utils import train_and_select_model
+from models.utils import train_and_select_model, evaluate_selected_model
 from data.utils import get_labeled_subset
 
 from typing import Tuple
@@ -28,7 +28,7 @@ def load_data(data_path: Path, shuffle: bool=True) -> Tuple[NDArray, NDArray, ND
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data', default='/home/timodw/IDLab/unsupervised_gait_detection/processed_data')
+    parser.add_argument('--data', default='/home/timodw/IDLab/unsupervised_gait_detection/processed_data/unbalanced')
     parser.add_argument('--results', default='/home/timodw/IDLab/unsupervised_gait_detection/results')
     parser.add_argument('--preprocessing', default='raw')
     parser.add_argument('--fold', default=0, type=int)
@@ -61,12 +61,23 @@ if __name__ == '__main__':
         model_parameters = {}
 
     # Train the models
+    results = []
     for i in range(args.n_iter):
-        print(f"Training iteration {i + 1}/{args.n_iter}...")
+        print(f"Iteration {i + 1}/{args.n_iter}...")
         ts = time()
         X_train_selected, y_train_selected = get_labeled_subset(X_train, y_train, args.n_samples)
-        train_and_select_model(X_train, X_train_selected, y_train_selected,
-                               args.n_models, args.model_type, model_parameters,
-                               verbose=True, device=args.device)
+        model, label_mapping = train_and_select_model(X_train, X_train_selected, y_train_selected,
+                                                      args.n_models, args.model_type, model_parameters,
+                                                      verbose=True, device=args.device)
+        precision, recall, f1_score, _ = evaluate_selected_model(X_val, y_val, model, label_mapping, device=args.device)
+        results.append([precision, recall, f1_score])
+        print(f"Precision: {precision:.2%}; Recall: {recall:.2%}; F1-Score: {f1_score:.2%}")
         te = time()
-        print(f"Training completed after {te - ts:.2f}s\n")
+        time_str = f"Iteration completed after {te - ts:.2f}s"
+        print(time_str, end='\n\n')
+        print(f"{'#' * len(time_str)}\n")
+
+    results = np.asarray(results)
+    print(f"Precision:\t{np.mean(results[:, 0]):.2%}±{100 * np.std(results[:, 0]):.2f}")
+    print(f"Recall:\t\t{np.mean(results[:, 1]):.2%}±{100 * np.std(results[:, 1]):.2f}")
+    print(f"F1-Score:\t{np.mean(results[:, 2]):.2%}±{100 * np.std(results[:, 2]):.2f}")
